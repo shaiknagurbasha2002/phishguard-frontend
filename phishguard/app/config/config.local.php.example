@@ -1,0 +1,12 @@
+<?php
+/**
+ * Local overrides. Copy to config.local.php and set your DB credentials.
+ */
+return [
+    'database' => [
+        'host' => '127.0.0.1',
+        'name' => 'phishguard',
+        'user' => 'root',
+        'pass' => '',
+    ],
+];

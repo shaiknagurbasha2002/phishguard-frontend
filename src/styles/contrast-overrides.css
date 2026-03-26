@@ -1,0 +1,257 @@
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  PhishGuard — Global Dark-Theme Text Contrast System
+ *  contrast-overrides.css
+ * ───────────────────────────────────────────────────────────────────────────
+ *  HOW THIS WORKS
+ *  ──────────────
+ *  Tailwind v4 places all utility classes inside @layer utilities.
+ *  CSS rules written OUTSIDE any @layer (like all rules in this file)
+ *  have HIGHER cascade priority than layered rules.
+ *  Result: these overrides win without needing !important.
+ *
+ *  The entire PhishGuard app uses dark slate backgrounds:
+ *    bg-slate-900  (#0f172a)   ← primary surface
+ *    bg-slate-800  (#1e293b)   ← card surface
+ *    bg-slate-950  (#020617)   ← sidebar/backdrop
+ *
+ *  WCAG AA contrast ratio ≥ 4.5:1 is required for normal text.
+ *  Contrast ratios on bg-slate-900:
+ *    slate-300 (#cbd5e1)  →  10.1 : 1  ✅  PRIMARY TEXT
+ *    slate-400 (#94a3b8)  →   5.7 : 1  ✅  SECONDARY TEXT (min)
+ *    slate-500 (#64748b)  →   3.1 : 1  ❌  TOO DARK — fails AA
+ *    slate-600 (#475569)  →   1.9 : 1  ❌  TOO DARK — nearly invisible
+ *    slate-700 (#334155)  →   1.5 : 1  ❌  INVISIBLE as text
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+
+/* ── 1. Activate dark-mode CSS variables ────────────────────────────────── */
+/*
+ *  The .dark block in globals.css is compiled into index.css.
+ *  <html class="dark"> (set in index.html) activates it.
+ *  We also override --muted-foreground here so shadcn components
+ *  (CardDescription, TableHead, Label, etc.) use a bright color.
+ */
+.dark {
+  --muted-foreground: oklch(0.87 0 0);   /* was 0.708 — ~slate-300 brightness */
+  --card-foreground:  oklch(0.985 0 0);  /* pure near-white */
+  --popover-foreground: oklch(0.985 0 0);
+}
+
+/* Fallback: if dark class is ever absent, keep text readable on dark bg */
+:root {
+  --muted-foreground: oklch(0.87 0 0);
+}
+
+
+/* ── 2. Slate text utility upgrades ─────────────────────────────────────── */
+/*
+ *  These replace Tailwind's text-slate-{400,500,600} with brighter values.
+ *  They override the @layer utilities rules via cascade priority.
+ */
+
+/* text-slate-400 (#94a3b8 → 5.7:1) — upgrade to slate-300 for safety */
+.text-slate-400 {
+  color: #cbd5e1; /* slate-300, 10.1:1 ratio ✅ */
+}
+
+/* text-slate-500 (#64748b → 3.1:1 FAIL) — major upgrade needed */
+.text-slate-500 {
+  color: #cbd5e1; /* slate-300, 10.1:1 ratio ✅ */
+}
+
+/* text-slate-600 (#475569 → 1.9:1 FAIL) — nearly invisible without fix */
+.text-slate-600 {
+  color: #94a3b8; /* slate-400, 5.7:1 ratio ✅ */
+}
+
+
+/* ── 3. shadcn muted-foreground class ───────────────────────────────────── */
+/*
+ *  CardDescription, TableHead, and many shadcn primitives use this class.
+ *  With .dark activated on <html>, the CSS var handles it.
+ *  This is an explicit fallback for any case where the var isn't applied.
+ */
+.text-muted-foreground {
+  color: #cbd5e1 !important; /* slate-300 — always readable */
+}
+
+
+/* ── 4. Placeholder text ─────────────────────────────────────────────────── */
+/*
+ *  Browser default placeholders are ~40% opacity which is invisible
+ *  on dark inputs. Force a readable gray.
+ */
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8 !important; /* slate-400 — clearly secondary but readable */
+  opacity: 1 !important;
+}
+
+
+/* ── 5. Table defaults ───────────────────────────────────────────────────── */
+th {
+  color: #e2e8f0 !important; /* slate-200 — table headers must be clear */
+}
+
+td {
+  color: #e2e8f0; /* slate-200 — table cells readable */
+}
+
+
+/* ── 6. Form labels ──────────────────────────────────────────────────────── */
+/*
+ *  shadcn Label uses text-sm font-medium which can inherit dim colors.
+ *  Ensure all labels are bright white by default.
+ */
+label:not([class*="text-"]) {
+  color: #f1f5f9; /* slate-100 */
+}
+
+
+/* ── 7. Small / caption / figcaption text ────────────────────────────────── */
+small,
+caption,
+figcaption {
+  color: #94a3b8; /* slate-400 — 5.7:1, secondary but visible */
+}
+
+
+/* ── 8. Code and pre blocks ──────────────────────────────────────────────── */
+code,
+pre {
+  color: #e2e8f0; /* slate-200 */
+}
+
+
+/* ── 9. Horizontal rule / separator ─────────────────────────────────────── */
+hr {
+  border-color: #334155; /* slate-700 — subtle but visible */
+}
+
+
+/* ── 10. Links inside dark cards ────────────────────────────────────────── */
+/*
+ *  Un-classed anchor tags default to browser blue which is
+ *  unreadable on dark slate backgrounds. Use a lighter blue.
+ */
+a:not([class*="text-"]) {
+  color: #93c5fd; /* blue-300 — visible and clearly a link */
+}
+
+
+/* ── 11. Badge / tag with opacity backgrounds ───────────────────────────── */
+/*
+ *  Classes like bg-indigo-500/10 produce near-transparent backgrounds.
+ *  The text color must be bright on those badges.
+ *  Tailwind's opacity modifier pattern: ends in /10, /15, /20, /30.
+ *  We cannot selector-match on "/" so we override the badge text colors
+ *  directly by targeting common badge patterns.
+ */
+[class*="text-indigo-3"],
+[class*="text-blue-3"],
+[class*="text-green-3"],
+[class*="text-red-3"],
+[class*="text-yellow-3"],
+[class*="text-purple-3"],
+[class*="text-orange-3"],
+[class*="text-cyan-3"],
+[class*="text-pink-3"],
+[class*="text-emerald-3"] {
+  /* These are already relatively bright — keep but ensure minimum brightness */
+  filter: brightness(1.2);
+}
+
+
+/* ── 12. Select / Dropdown items ────────────────────────────────────────── */
+[role="option"] {
+  color: #f1f5f9; /* slate-100 */
+}
+
+[role="listbox"] {
+  color: #f1f5f9;
+}
+
+
+/* ── 13. Dropdown menu items ────────────────────────────────────────────── */
+[data-radix-collection-item] {
+  color: #e2e8f0;
+}
+
+
+/* ── 14. Alert / notification text ─────────────────────────────────────── */
+/* shadcn Alert components with error/success states */
+.text-red-400   { color: #fca5a5; } /* red-300 equivalent — keep bright */
+.text-green-400 { color: #86efac; } /* green-300 equivalent */
+.text-blue-400  { color: #93c5fd; } /* blue-300 equivalent */
+.text-yellow-400 { color: #fde047; } /* yellow-300 equivalent */
+.text-purple-400 { color: #d8b4fe; } /* purple-300 equivalent */
+.text-orange-400 { color: #fdba74; } /* orange-300 equivalent */
+.text-cyan-400   { color: #67e8f9; } /* cyan-300 equivalent */
+.text-emerald-400 { color: #6ee7b7; } /* emerald-300 equivalent */
+.text-indigo-400  { color: #a5b4fc; } /* indigo-300 equivalent */
+.text-pink-400    { color: #f9a8d4; } /* pink-300 equivalent */
+.text-violet-400  { color: #c4b5fd; } /* violet-300 equivalent */
+
+
+/* ── 15. Sidebar text ────────────────────────────────────────────────────── */
+/* shadcn Sidebar uses CSS vars — handled by .dark block.
+   Additional safety for any text inside sidebar wrappers: */
+[data-sidebar] {
+  color: #f1f5f9;
+}
+
+[data-sidebar="menu-button"] {
+  color: #e2e8f0;
+}
+
+
+/* ── 16. Navbar / top bar text ───────────────────────────────────────────── */
+nav {
+  color: #f1f5f9;
+}
+
+
+/* ── 17. Tooltip text ────────────────────────────────────────────────────── */
+[role="tooltip"] {
+  color: #f1f5f9;
+  background-color: #1e293b; /* slate-800 */
+}
+
+
+/* ── 18. Badge component text (shadcn) ───────────────────────────────────── */
+/*
+ *  shadcn Badge with variant="outline" or variant="secondary"
+ *  can have dim text. Force outline badges to be bright.
+ */
+.border.text-foreground\/80 {
+  color: #e2e8f0;
+}
+
+
+/* ── 19. Empty-state / helper text ──────────────────────────────────────── */
+/*
+ *  Common pattern: empty state messages, helper text, captions.
+ *  These often use text-slate-500 which we've already overridden above,
+ *  but adding italic text as an extra catch:
+ */
+em, i {
+  color: inherit;
+}
+
+
+/* ── 20. Disabled state text ─────────────────────────────────────────────── */
+/*
+ *  Disabled inputs/buttons should still be readable (just dimmer).
+ *  Ensure they don't fall below visible threshold.
+ */
+[disabled],
+[aria-disabled="true"] {
+  opacity: 0.65;
+  color: #94a3b8; /* still slate-400, not fully invisible */
+}
+
+/*
+ * ─── END PhishGuard Contrast Override System ────────────────────────────
+ */
