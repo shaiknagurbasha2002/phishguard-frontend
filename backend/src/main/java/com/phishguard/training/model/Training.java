@@ -1,11 +1,15 @@
 package com.phishguard.training.model;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @Table(name = "training")
@@ -24,6 +28,9 @@ public class Training {
     /** Completion 0–100 */
     @Column(nullable = false)
     private Integer progress = 0;
+
+    @OneToMany(mappedBy = "training", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<TrainingAttachment> attachments = new ArrayList<>();
 
     public Long getId() {
         return id;
@@ -55,5 +62,13 @@ public class Training {
 
     public void setProgress(Integer progress) {
         this.progress = progress;
+    }
+
+    public List<TrainingAttachment> getAttachments() {
+        return attachments;
+    }
+
+    public void setAttachments(List<TrainingAttachment> attachments) {
+        this.attachments = attachments;
     }
 }

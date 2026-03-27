@@ -37,9 +37,10 @@ import {
 } from '../ui/dropdown-menu';
 import { useCurrentUser } from '@/context/UsersContext';
 import {
-  getNotifications, markNotificationRead, markAllNotificationsRead,
+  getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead,
   type NotificationRow,
 } from '@/lib/api';
+import { toast } from 'sonner';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -84,6 +85,12 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function formatDateTime(iso: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
 // ── Main layout ──────────────────────────────────────────────────────────────
 export function DashboardLayout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -96,31 +103,30 @@ export function DashboardLayout() {
   const [notifOpen, setNotifOpen]           = useState(false);
   const [notifications, setNotifications]   = useState<NotificationRow[]>([]);
   const [notifLoading, setNotifLoading]     = useState(false);
+  const [unreadCount, setUnreadCount]       = useState(0);
+  const [markAllReadBusy, setMarkAllReadBusy] = useState(false);
   const notifRef                            = useRef<HTMLDivElement>(null);
-
-  const unreadCount = notifications.filter(n => !n.read).length;
 
   // Fetch notifications whenever the panel opens or the userId changes
   const fetchNotifications = useCallback(async () => {
-    if (!currentUser?.id) return;
     setNotifLoading(true);
     try {
-      const list = await getNotifications(currentUser.id);
+      const [list, unread] = await Promise.all([getNotifications(), getUnreadCount()]);
       setNotifications(list);
+      setUnreadCount(unread);
     } catch {
       // silent — bell just shows no items
     } finally {
       setNotifLoading(false);
     }
-  }, [currentUser?.id]);
+  }, []);
 
   // Poll every 60 s so new admin content shows up automatically
   useEffect(() => {
-    if (!currentUser?.id) return;
     void fetchNotifications();
     const interval = setInterval(() => { void fetchNotifications(); }, 60_000);
     return () => clearInterval(interval);
-  }, [fetchNotifications, currentUser?.id]);
+  }, [fetchNotifications]);
 
   // Close panel when clicking outside
   useEffect(() => {
@@ -134,20 +140,51 @@ export function DashboardLayout() {
   }, [notifOpen]);
 
   async function handleMarkRead(n: NotificationRow) {
-    if (n.read) return;
+    if (n.read) {
+      if (n.link) {
+        try {
+          navigate(n.link);
+          setNotifOpen(false);
+        } catch (e) {
+          console.error('[PhishGuard] notification navigate failed', e);
+          toast.error('Could not open link');
+        }
+      }
+      return;
+    }
     try {
       const updated = await markNotificationRead(n.id);
       setNotifications(prev => prev.map(x => x.id === updated.id ? updated : x));
-    } catch { /* silent */ }
-    if (n.link) { navigate(n.link); setNotifOpen(false); }
+      setUnreadCount(prev => Math.max(0, prev - 1));
+    } catch (e) {
+      console.error('[PhishGuard] markNotificationRead failed', e);
+      toast.error(e instanceof Error ? e.message : 'Could not mark as read');
+      return;
+    }
+    if (n.link) {
+      try {
+        navigate(n.link);
+        setNotifOpen(false);
+      } catch (e) {
+        console.error('[PhishGuard] notification navigate failed', e);
+        toast.error('Could not open link');
+      }
+    }
   }
 
   async function handleMarkAllRead() {
-    if (!currentUser?.id) return;
+    if (markAllReadBusy) return;
+    setMarkAllReadBusy(true);
     try {
-      await markAllNotificationsRead(currentUser.id);
+      await markAllNotificationsRead();
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    } catch { /* silent */ }
+      setUnreadCount(0);
+    } catch (e) {
+      console.error('[PhishGuard] markAllNotificationsRead failed', e);
+      toast.error(e instanceof Error ? e.message : 'Could not mark all as read');
+    } finally {
+      setMarkAllReadBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -391,11 +428,16 @@ export function DashboardLayout() {
                         {unreadCount > 0 && (
                           <button
                             type="button"
-                            onClick={handleMarkAllRead}
-                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors font-medium"
+                            disabled={markAllReadBusy}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void handleMarkAllRead();
+                            }}
+                            className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors font-medium disabled:opacity-50 disabled:pointer-events-none"
                           >
                             <CheckCheck className="h-3.5 w-3.5" />
-                            Mark all read
+                            {markAllReadBusy ? 'Updating…' : 'Mark all read'}
                           </button>
                         )}
                       </div>
@@ -416,7 +458,11 @@ export function DashboardLayout() {
                             <button
                               key={n.id}
                               type="button"
-                              onClick={() => void handleMarkRead(n)}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void handleMarkRead(n);
+                              }}
                               className={`w-full text-left px-4 py-3 flex gap-3 border-b border-slate-800 transition-colors
                                 ${n.read
                                   ? 'bg-slate-900 hover:bg-slate-800'
@@ -428,11 +474,16 @@ export function DashboardLayout() {
                               </div>
 
                               <div className="flex-1 min-w-0">
-                                <p className={`text-xs leading-snug ${n.read ? 'text-slate-300' : 'text-white font-semibold'}`}>
+                                {n.title && (
+                                  <p className={`text-xs leading-snug ${n.read ? 'text-slate-200' : 'text-white font-semibold'}`}>
+                                    {n.title}
+                                  </p>
+                                )}
+                                <p className={`text-xs leading-snug ${n.read ? 'text-slate-300' : 'text-slate-100'} ${n.title ? 'mt-0.5' : ''}`}>
                                   {n.message}
                                 </p>
                                 <p className="text-[10px] text-slate-500 mt-0.5">
-                                  {timeAgo(n.createdAt)}
+                                  {formatDateTime(n.createdAt)}
                                 </p>
                               </div>
 
@@ -461,7 +512,10 @@ export function DashboardLayout() {
               {/* Profile dropdown */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="relative flex items-center gap-x-2">
+                  <button
+                    type="button"
+                    className="relative flex items-center gap-x-2 h-9 px-3 rounded-md text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
+                  >
                     <Avatar className="h-8 w-8">
                       <AvatarFallback className="bg-blue-600 text-white text-xs">
                         {initials(displayName)}
@@ -472,7 +526,7 @@ export function DashboardLayout() {
                         {displayName}
                       </span>
                     </span>
-                  </Button>
+                  </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-56 bg-slate-800 border-slate-700">
                   <DropdownMenuLabel className="text-slate-400">

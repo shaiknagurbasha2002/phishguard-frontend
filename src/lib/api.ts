@@ -42,6 +42,34 @@ const ACCEPT_JSON: HeadersInit = {
   Accept: "application/json",
 };
 
+const CURRENT_USER_ID_KEY = "phishguard_current_user_id";
+
+function readStoredCurrentUserId(): number | null {
+  try {
+    const v = localStorage.getItem(CURRENT_USER_ID_KEY);
+    if (v == null || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function withUserIdHeader(headers: HeadersInit): HeadersInit {
+  try {
+    const userId = localStorage.getItem(CURRENT_USER_ID_KEY);
+    if (userId && userId.trim() !== "") {
+      return {
+        ...(headers as Record<string, string>),
+        "X-User-Id": userId,
+      };
+    }
+  } catch {
+    // ignore localStorage access errors
+  }
+  return headers;
+}
+
 /**
  * Maps backend fields to frontend `UserRow`.
  * Supports: full_name, name (common Spring), fullName (Jackson camelCase).
@@ -371,12 +399,12 @@ function normalizeIncident(raw: Record<string, unknown>): IncidentRow {
   };
 }
 
-async function fetchIncidentsFromUrl(url: string): Promise<IncidentRow[]> {
+async function fetchIncidentsFromUrl(url: string, includeUserHeader = false): Promise<IncidentRow[]> {
   let res: Response;
   try {
     res = await fetch(url, {
       method: "GET",
-      headers: ACCEPT_JSON,
+      headers: includeUserHeader ? withUserIdHeader(ACCEPT_JSON) : ACCEPT_JSON,
       mode: "cors",
     });
   } catch (e) {
@@ -395,7 +423,7 @@ export async function getIncidentsForUser(userId: number): Promise<IncidentRow[]
 
 /** GET /api/incidents (admin-style: all incidents) */
 export async function getAllIncidents(): Promise<IncidentRow[]> {
-  return fetchIncidentsFromUrl(INCIDENTS_URL);
+  return fetchIncidentsFromUrl(INCIDENTS_URL, true);
 }
 
 /** POST /api/incidents */
@@ -721,7 +749,7 @@ export async function createSimulation(body: SimulationCreateInput): Promise<Sim
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: JSON_HEADERS,
+      headers: withUserIdHeader(JSON_HEADERS),
       mode: "cors",
       body: JSON.stringify({ title: body.title, description: body.description, type: body.type }),
     });
@@ -737,7 +765,7 @@ export async function deleteSimulation(id: number): Promise<void> {
   const url = `${SIMULATIONS_URL}/${encodeURIComponent(String(id))}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: ACCEPT_JSON, mode: "cors" });
+    res = await fetch(url, { method: "DELETE", headers: withUserIdHeader(ACCEPT_JSON), mode: "cors" });
   } catch (e) {
     throw wrapApiNetworkError(url, e);
   }
@@ -761,7 +789,7 @@ export async function createKnowledgeArticle(body: KnowledgeArticleInput): Promi
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: JSON_HEADERS,
+      headers: withUserIdHeader(JSON_HEADERS),
       mode: "cors",
       body: JSON.stringify({ title: body.title, category: body.category, content: body.content, author: body.author }),
     });
@@ -777,7 +805,7 @@ export async function deleteKnowledgeArticle(id: number): Promise<void> {
   const url = `${KNOWLEDGE_URL}/${encodeURIComponent(String(id))}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: ACCEPT_JSON, mode: "cors" });
+    res = await fetch(url, { method: "DELETE", headers: withUserIdHeader(ACCEPT_JSON), mode: "cors" });
   } catch (e) {
     throw wrapApiNetworkError(url, e);
   }
@@ -794,7 +822,7 @@ export async function updateIncidentStatus(id: number, status: string): Promise<
   try {
     res = await fetch(url, {
       method: "PUT",
-      headers: JSON_HEADERS,
+      headers: withUserIdHeader(JSON_HEADERS),
       mode: "cors",
       body: JSON.stringify({ status }),
     });
@@ -810,7 +838,7 @@ export async function deleteIncident(id: number): Promise<void> {
   const url = `${INCIDENTS_URL}/${encodeURIComponent(String(id))}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: ACCEPT_JSON, mode: "cors" });
+    res = await fetch(url, { method: "DELETE", headers: withUserIdHeader(ACCEPT_JSON), mode: "cors" });
   } catch (e) {
     throw wrapApiNetworkError(url, e);
   }
@@ -824,13 +852,20 @@ export const FILE_UPLOAD_URL = `${API_ORIGIN}/api/files/upload`;
 
 export type UploadResult = { fileUrl: string; fileName: string; fileSize: string };
 
-/** POST /api/files/upload — upload a file and get back its URL */
+/** POST /api/files/upload — upload a file and get back its URL (ADMIN ONLY — sends X-User-Id) */
 export async function uploadFile(file: File): Promise<UploadResult> {
   const formData = new FormData();
   formData.append("file", file);
+  // NOTE: Do NOT set Content-Type manually — browser sets it automatically with the
+  // multipart boundary. Only inject X-User-Id for the admin check on the backend.
   let res: Response;
   try {
-    res = await fetch(FILE_UPLOAD_URL, { method: "POST", body: formData, mode: "cors" });
+    res = await fetch(FILE_UPLOAD_URL, {
+      method: "POST",
+      body: formData,
+      mode: "cors",
+      headers: withUserIdHeader({}),   // adds X-User-Id from localStorage
+    });
   } catch (e) {
     throw wrapApiNetworkError(FILE_UPLOAD_URL, e);
   }
@@ -842,7 +877,12 @@ export async function attachFileToTraining(id: number, fileUrl: string): Promise
   const url = `${TRAINING_URL}/${encodeURIComponent(String(id))}/file`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "PATCH", headers: JSON_HEADERS, mode: "cors", body: JSON.stringify({ fileUrl }) });
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: withUserIdHeader(JSON_HEADERS),
+      mode: "cors",
+      body: JSON.stringify({ fileUrl }),
+    });
   } catch (e) {
     throw wrapApiNetworkError(url, e);
   }
@@ -934,7 +974,7 @@ export async function createTraining(body: TrainingInput): Promise<TrainingRow> 
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: JSON_HEADERS,
+      headers: withUserIdHeader(JSON_HEADERS),
       mode: "cors",
       body: JSON.stringify({ title: body.title, description: body.description }),
     });
@@ -948,12 +988,17 @@ export async function createTraining(body: TrainingInput): Promise<TrainingRow> 
 /** DELETE /api/training/{id} */
 export async function deleteTraining(id: number): Promise<void> {
   const url = `${TRAINING_URL}/${encodeURIComponent(String(id))}`;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 15000); // 15-second timeout
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: ACCEPT_JSON, mode: "cors" });
+    res = await fetch(url, { method: "DELETE", headers: withUserIdHeader(ACCEPT_JSON), mode: "cors", signal: abort.signal });
   } catch (e) {
+    clearTimeout(timer);
+    if ((e as Error)?.name === "AbortError") throw new Error("Request timed out. Please check the server is running.");
     throw wrapApiNetworkError(url, e);
   }
+  clearTimeout(timer);
   if (res.ok || res.status === 204) return;
   throw new Error(await readError(res));
 }
@@ -974,7 +1019,7 @@ export async function addTrainingAttachment(
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: JSON_HEADERS,
+      headers: withUserIdHeader(JSON_HEADERS),
       mode: "cors",
       body: JSON.stringify(attachment),
     });
@@ -991,12 +1036,17 @@ export async function deleteTrainingAttachment(
   attachmentId: number,
 ): Promise<void> {
   const url = `${TRAINING_URL}/${encodeURIComponent(String(moduleId))}/attachments/${encodeURIComponent(String(attachmentId))}`;
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), 15000); // 15-second timeout
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: ACCEPT_JSON, mode: "cors" });
+    res = await fetch(url, { method: "DELETE", headers: withUserIdHeader(ACCEPT_JSON), mode: "cors", signal: abort.signal });
   } catch (e) {
+    clearTimeout(timer);
+    if ((e as Error)?.name === "AbortError") throw new Error("Request timed out. Please check the server is running.");
     throw wrapApiNetworkError(url, e);
   }
+  clearTimeout(timer);
   if (res.ok || res.status === 204) return;
   throw new Error(await readError(res));
 }
@@ -1059,7 +1109,7 @@ export async function createQuizQuestion(body: QuizQuestionInput): Promise<QuizQ
   try {
     res = await fetch(url, {
       method: "POST",
-      headers: JSON_HEADERS,
+      headers: withUserIdHeader(JSON_HEADERS),
       mode: "cors",
       body: JSON.stringify({
         question: body.question,
@@ -1082,7 +1132,7 @@ export async function deleteQuizQuestion(id: number): Promise<void> {
   const url = `${QUIZ_QUESTIONS_URL}/${encodeURIComponent(String(id))}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: ACCEPT_JSON, mode: "cors" });
+    res = await fetch(url, { method: "DELETE", headers: withUserIdHeader(ACCEPT_JSON), mode: "cors" });
   } catch (e) {
     throw wrapApiNetworkError(url, e);
   }
@@ -1099,6 +1149,7 @@ export const NOTIFICATIONS_URL = `${API_ORIGIN}/api/notifications`;
 export type NotificationRow = {
   id: number;
   userId: number | null;   // null = global (visible to all)
+  title: string | null;
   message: string;
   type: "article" | "training" | "simulation" | "alert" | string;
   read: boolean;           // maps from Java isRead
@@ -1110,6 +1161,7 @@ function normalizeNotification(raw: Record<string, unknown>): NotificationRow {
   return {
     id: Number(raw.id),
     userId: raw.userId != null ? Number(raw.userId) : null,
+    title: raw.title != null ? String(raw.title) : null,
     message: String(raw.message ?? ""),
     type: String(raw.type ?? "alert"),
     // Java serialises isRead as "read" in JSON
@@ -1119,32 +1171,52 @@ function normalizeNotification(raw: Record<string, unknown>): NotificationRow {
   };
 }
 
-/** GET /api/notifications/user/{userId} — all notifications (targeted + global) */
-export async function getNotifications(userId: number): Promise<NotificationRow[]> {
-  const url = `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(userId))}`;
-  let res: Response;
-  try {
-    res = await fetch(url, { method: "GET", headers: ACCEPT_JSON, mode: "cors" });
-  } catch (e) {
-    throw wrapApiNetworkError(url, e);
+/**
+ * GET notifications — tries user-scoped URL first (common Spring: /api/notifications/user/{userId}),
+ * then plain /api/notifications, so we avoid 405 console noise when only one style is implemented.
+ */
+export async function getNotifications(): Promise<NotificationRow[]> {
+  const uid = readStoredCurrentUserId();
+  const urls = uid != null
+    ? [`${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(uid))}`, NOTIFICATIONS_URL]
+    : [NOTIFICATIONS_URL];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { method: "GET", headers: ACCEPT_JSON, mode: "cors" });
+      if (!res.ok) continue;
+      const data = (await res.json().catch(() => null)) as unknown;
+      if (!Array.isArray(data)) continue;
+      return (data as Record<string, unknown>[]).map(normalizeNotification);
+    } catch {
+      /* try next url */
+    }
   }
-  const data = await handleJsonResponse<unknown>(res);
-  if (!Array.isArray(data)) return [];
-  return (data as Record<string, unknown>[]).map(normalizeNotification);
+  return [];
 }
 
-/** GET /api/notifications/user/{userId}/unread-count — just the badge number */
-export async function getUnreadCount(userId: number): Promise<number> {
-  const url = `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(userId))}/unread-count`;
-  let res: Response;
-  try {
-    res = await fetch(url, { method: "GET", headers: ACCEPT_JSON, mode: "cors" });
-  } catch (e) {
-    return 0; // silent fallback so the bell doesn't crash
+/** GET unread count — same dual-path pattern as getNotifications */
+export async function getUnreadCount(): Promise<number> {
+  const uid = readStoredCurrentUserId();
+  const urls =
+    uid != null
+      ? [
+          `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(uid))}/unread-count`,
+          `${NOTIFICATIONS_URL}/unread-count`,
+        ]
+      : [`${NOTIFICATIONS_URL}/unread-count`];
+
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { method: "GET", headers: ACCEPT_JSON, mode: "cors" });
+      if (!res.ok) continue;
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      return Number(data.count ?? 0);
+    } catch {
+      /* try next */
+    }
   }
-  if (!res.ok) return 0;
-  const data = await res.json() as Record<string, unknown>;
-  return Number(data.count ?? 0);
+  return 0;
 }
 
 /** PUT /api/notifications/{id}/read — mark one notification as read */
@@ -1160,15 +1232,26 @@ export async function markNotificationRead(id: number): Promise<NotificationRow>
   return normalizeNotification(data);
 }
 
-/** PUT /api/notifications/user/{userId}/read-all — mark all as read */
-export async function markAllNotificationsRead(userId: number): Promise<void> {
-  const url = `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(userId))}/read-all`;
-  let res: Response;
-  try {
-    res = await fetch(url, { method: "PUT", headers: ACCEPT_JSON, mode: "cors" });
-  } catch (e) {
-    throw wrapApiNetworkError(url, e);
+/** PUT mark all read — tries /user/{id}/read-all then /read-all */
+export async function markAllNotificationsRead(): Promise<void> {
+  const uid = readStoredCurrentUserId();
+  const urls =
+    uid != null
+      ? [
+          `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(uid))}/read-all`,
+          `${NOTIFICATIONS_URL}/read-all`,
+        ]
+      : [`${NOTIFICATIONS_URL}/read-all`];
+
+  let lastMsg = "Could not mark all as read";
+  for (const url of urls) {
+    try {
+      const res = await fetch(url, { method: "PUT", headers: ACCEPT_JSON, mode: "cors" });
+      if (res.ok || res.status === 204) return;
+      lastMsg = await readError(res);
+    } catch (e) {
+      lastMsg = e instanceof Error ? e.message : lastMsg;
+    }
   }
-  if (res.ok || res.status === 204) return;
-  throw new Error(await readError(res));
+  throw new Error(lastMsg);
 }

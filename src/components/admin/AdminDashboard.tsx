@@ -30,6 +30,7 @@ import {
 import { useUsers, useCreateUser, useDeleteUser, useCurrentUser } from '@/context/UsersContext';
 import {
   API_ORIGIN,
+  withUserIdHeader,
   getAllIncidents, updateIncidentStatus, deleteIncident,
   getSimulations, createSimulation, deleteSimulation,
   getKnowledgeArticles, createKnowledgeArticle, deleteKnowledgeArticle,
@@ -105,7 +106,7 @@ function SectionHeader({ title, count, onRefresh, loading }: {
           <span className="text-xs bg-slate-700 text-slate-300 rounded-full px-2 py-0.5">{count}</span>
         )}
       </div>
-      <Button variant="outline" size="sm"
+      <Button type="button" variant="outline" size="sm"
         className="border-slate-600 text-slate-300 hover:bg-slate-700 gap-1.5"
         onClick={onRefresh} disabled={loading}>
         <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
@@ -114,28 +115,33 @@ function SectionHeader({ title, count, onRefresh, loading }: {
   );
 }
 
+// DeleteButton — uses window.confirm() instead of Radix AlertDialog.
+// Radix portals inside a looped list (items.map) create one overlay per item
+// which combined with motion.div layout causes a full browser freeze.
+// window.confirm() is a native browser dialog — zero portals, zero freeze, works everywhere.
 function DeleteButton({ onConfirm, title, description, disabled }: {
-  onConfirm: () => void; title: string; description: string; disabled?: boolean;
+  onConfirm: () => void | Promise<void>;
+  title: string;
+  description: string;
+  disabled?: boolean;
 }) {
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button size="sm" variant="destructive"
-          className="h-7 px-2 bg-red-600/80 hover:bg-red-600" disabled={disabled}>
-          <Trash2 className="h-3.5 w-3.5" />
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent className="bg-slate-900 border-slate-700">
-        <AlertDialogHeader>
-          <AlertDialogTitle className="text-white">{title}</AlertDialogTitle>
-          <AlertDialogDescription className="text-slate-400">{description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel className="border-slate-600 text-slate-300">Cancel</AlertDialogCancel>
-          <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={onConfirm}>Delete</AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <button
+      type="button"
+      title={title}
+      disabled={disabled}
+      className="inline-flex items-center justify-center h-7 px-2 rounded-md cursor-pointer
+                 bg-red-600/80 hover:bg-red-600 active:bg-red-700 text-white
+                 disabled:opacity-50 disabled:pointer-events-none transition-colors"
+      onClick={() => {
+        if (!window.confirm(`${title}\n\n${description}`)) return;
+        void Promise.resolve(onConfirm()).catch(err => {
+          console.error('[PhishGuard] DeleteButton onConfirm failed', err);
+        });
+      }}
+    >
+      <Trash2 className="h-3.5 w-3.5" />
+    </button>
   );
 }
 
@@ -171,7 +177,6 @@ function FileUploadBox({ onUploaded, currentUrl, disabled, clearAfterUpload }: {
     currentUrl ? getNameFromUrl(currentUrl) : null
   );
   const [fileUrl, setFileUrl]     = useState<string | null>(currentUrl ?? null);
-  const inputRef = useState<HTMLInputElement | null>(null);
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -206,7 +211,7 @@ function FileUploadBox({ onUploaded, currentUrl, disabled, clearAfterUpload }: {
           <>
             <FileText className="h-5 w-5 text-emerald-300 shrink-0" />
             <span className="text-white text-xs font-bold flex-1 truncate">{fileName ?? getNameFromUrl(fileUrl)}</span>
-            <button type="button" onClick={() => { setFileUrl(null); setFileName(null); onUploaded('', ''); }}
+            <button type="button" onClick={() => { setFileUrl(null); setFileName(null); }}
               className="text-white hover:text-red-300 transition-colors" disabled={disabled}>
               <X className="h-4 w-4" />
             </button>
@@ -223,7 +228,6 @@ function FileUploadBox({ onUploaded, currentUrl, disabled, clearAfterUpload }: {
             : 'bg-indigo-600 hover:bg-indigo-500 text-white'}`}>
           {uploading ? 'Uploading…' : fileUrl ? 'Replace' : 'Browse'}
           <input
-            ref={el => { inputRef[1](el); }}
             type="file"
             className="hidden"
             accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt"
@@ -352,11 +356,13 @@ function UsersTab() {
 }
 
 // ── TRAINING TAB ─────────────────────────────────────────────────────────────
+
 function TrainingTab() {
+  const { isAdmin } = useCurrentUser();
   const [items, setItems]     = useState<TrainingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  // No global "operating" lock — we use optimistic UI instead (instant remove, restore on error)
   const [title, setTitle]         = useState('');
   const [description, setDescription] = useState('');
   const [pendingFileUrl, setPendingFileUrl]   = useState('');
@@ -381,7 +387,6 @@ function TrainingTab() {
     try {
       const body: TrainingInput = { title: t, description: d };
       let created = await createTraining(body);
-      // If a file was uploaded during creation, attach it as the first attachment
       if (pendingFileUrl) {
         created = await addTrainingAttachment(created.id, {
           fileUrl: pendingFileUrl,
@@ -399,17 +404,8 @@ function TrainingTab() {
     } finally { setCreating(false); }
   }
 
-  async function handleDelete(id: number, moduleTitle: string) {
-    setDeleting(true);
-    try {
-      await deleteTraining(id);
-      setItems(prev => prev.filter(t => t.id !== id));
-      toast.success(`"${moduleTitle}" deleted`);
-    } catch (err) { toast.error(err instanceof Error ? err.message : 'Delete failed'); }
-    finally { setDeleting(false); }
-  }
-
   async function handleAddAttachment(id: number, fileUrl: string, fileName: string, fileSize: string) {
+    if (!fileUrl) return;   // guard — never send empty URL
     try {
       const updated = await addTrainingAttachment(id, { fileUrl, fileName, fileSize });
       setItems(prev => prev.map(m => m.id === id ? updated : m));
@@ -417,14 +413,36 @@ function TrainingTab() {
     } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to attach file'); }
   }
 
+  // Delete a single attachment — uses window.confirm (no portal, no overlay, no freeze)
   async function handleDeleteAttachment(moduleId: number, attachmentId: number, fileName: string) {
+    if (!window.confirm(`Delete "${fileName}"?\nThis file will be permanently removed.`)) return;
+    const snapshot = items;
+    setItems(prev => prev.map(m =>
+      m.id === moduleId
+        ? { ...m, attachments: (m.attachments as TrainingAttachment[]).filter(a => a.id !== attachmentId) }
+        : m
+    ));
     try {
       await deleteTrainingAttachment(moduleId, attachmentId);
-      setItems(prev => prev.map(m => m.id === moduleId
-        ? { ...m, attachments: (m.attachments as TrainingAttachment[]).filter(a => a.id !== attachmentId) }
-        : m));
       toast.success(`"${fileName}" removed`);
-    } catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to remove attachment'); }
+    } catch (err) {
+      setItems(snapshot);
+      toast.error(err instanceof Error ? err.message : 'Delete failed — file restored');
+    }
+  }
+
+  // Delete a whole module — uses window.confirm (no portal, no overlay, no freeze)
+  async function handleDeleteModule(moduleId: number, moduleTitle: string) {
+    if (!window.confirm(`Delete module "${moduleTitle}"?\nAll attached files will also be permanently removed.`)) return;
+    const snapshot = items;
+    setItems(prev => prev.filter(m => m.id !== moduleId));
+    try {
+      await deleteTraining(moduleId);
+      toast.success(`"${moduleTitle}" deleted`);
+    } catch (err) {
+      setItems(snapshot);
+      toast.error(err instanceof Error ? err.message : 'Delete failed — module restored');
+    }
   }
 
   return (
@@ -439,48 +457,50 @@ function TrainingTab() {
         </div>
       </div>
 
-      <Card className="border-slate-700 bg-slate-800/60">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-white text-sm flex items-center gap-2">
-            <Plus className="h-4 w-4 text-emerald-400" /> Add Training Module
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleCreate} className="space-y-3">
-            {formError && (
-              <Alert className="bg-red-900/20 border-red-900 py-2">
-                <AlertDescription className="text-sm">{formError}</AlertDescription>
-              </Alert>
-            )}
-            <div className="space-y-1">
-              <Label className="text-white text-xs font-semibold">Module Title</Label>
-              <Input value={title} onChange={e => setTitle(e.target.value)}
-                className="bg-slate-900 border-slate-600 text-white h-9"
-                placeholder="e.g. Introduction to Phishing, Social Engineering Tactics…"
-                disabled={creating} />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-white text-xs font-semibold">Description / Content</Label>
-              <Textarea value={description} onChange={e => setDescription(e.target.value)}
-                className="bg-slate-900 border-slate-600 text-white resize-none min-h-[80px]"
-                placeholder="Explain what this module covers and what students will learn…"
-                disabled={creating} />
-            </div>
-            <FileUploadBox
-              onUploaded={(url, name, size) => {
-                setPendingFileUrl(url);
-                setPendingFileName(name);
-                setPendingFileSize(size ?? '');
-              }}
-              disabled={creating}
-            />
-            <Button type="submit" disabled={creating}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
-              <Plus className="h-4 w-4" />{creating ? 'Adding…' : 'Add Module'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      {isAdmin && (
+        <Card className="border-slate-700 bg-slate-800/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-white text-sm flex items-center gap-2">
+              <Plus className="h-4 w-4 text-emerald-400" /> Add Training Module
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleCreate} className="space-y-3">
+              {formError && (
+                <Alert className="bg-red-900/20 border-red-900 py-2">
+                  <AlertDescription className="text-sm">{formError}</AlertDescription>
+                </Alert>
+              )}
+              <div className="space-y-1">
+                <Label className="text-white text-xs font-semibold">Module Title</Label>
+                <Input value={title} onChange={e => setTitle(e.target.value)}
+                  className="bg-slate-900 border-slate-600 text-white h-9"
+                  placeholder="e.g. Introduction to Phishing, Social Engineering Tactics…"
+                  disabled={creating} />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-white text-xs font-semibold">Description / Content</Label>
+                <Textarea value={description} onChange={e => setDescription(e.target.value)}
+                  className="bg-slate-900 border-slate-600 text-white resize-none min-h-[80px]"
+                  placeholder="Explain what this module covers and what students will learn…"
+                  disabled={creating} />
+              </div>
+              <FileUploadBox
+                onUploaded={(url, name, size) => {
+                  setPendingFileUrl(url);
+                  setPendingFileName(name);
+                  setPendingFileSize(size ?? '');
+                }}
+                disabled={creating}
+              />
+              <Button type="submit" disabled={creating}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5">
+                <Plus className="h-4 w-4" />{creating ? 'Adding…' : 'Add Module'}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-slate-700 bg-slate-800/60">
         <CardHeader className="pb-3">
@@ -492,8 +512,9 @@ function TrainingTab() {
           ) : (
             <div className="space-y-3">
               {items.map((m, idx) => (
-                <motion.div key={m.id} layout
-                  initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                // Plain div — no motion.div/layout here to avoid framer-motion
+                // interfering with Radix portals and causing measurement loops
+                <div key={m.id}
                   className="rounded-lg border border-slate-600 bg-slate-800 p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex gap-3 items-start flex-1 min-w-0">
@@ -513,38 +534,61 @@ function TrainingTab() {
                                   {att.fileName}
                                 </a>
                                 <span className="text-slate-400 text-xs shrink-0">{formatDate(att.uploadedAt)}</span>
-                                <button type="button"
-                                  onClick={() => void handleDeleteAttachment(m.id, att.id, att.fileName)}
-                                  className="text-slate-400 hover:text-red-400 transition-colors shrink-0"
-                                  title="Remove file">
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
+                                {isAdmin && (
+                                  // Plain button — opens the ONE shared dialog via state
+                                  <button
+                                    type="button"
+                                    title="Delete this file"
+                                    className="ml-1 inline-flex items-center justify-center h-6 w-6 rounded cursor-pointer
+                                               text-slate-400 hover:text-white hover:bg-red-600
+                                               transition-all duration-150 shrink-0 group"
+                                    onClick={e => {
+                                      e.preventDefault();
+                                      e.stopPropagation();
+                                      void handleDeleteAttachment(m.id, att.id, att.fileName);
+                                    }}
+                                  >
+                                    <X className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" />
+                                  </button>
+                                )}
                               </div>
                             ))}
                           </div>
                         )}
                       </div>
                     </div>
-                    <DeleteButton
-                      title="Delete module?"
-                      description={`"${m.title}" will be permanently removed.`}
-                      onConfirm={() => void handleDelete(m.id, m.title)}
-                      disabled={deleting}
-                    />
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        title="Delete this module"
+                        className="inline-flex items-center justify-center gap-1 h-7 px-2.5 rounded-md cursor-pointer
+                                   bg-red-600/80 hover:bg-red-600 active:bg-red-700 text-white
+                                   transition-all duration-150 shrink-0 group"
+                        onClick={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          void handleDeleteModule(m.id, m.title);
+                        }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5 group-hover:scale-110 transition-transform" />
+                      </button>
+                    )}
                   </div>
-                  {/* Add another file to this module */}
-                  <div className="pl-8">
-                    <FileUploadBox
-                      clearAfterUpload
-                      onUploaded={(url, name, size) => void handleAddAttachment(m.id, url, name, size ?? '')}
-                    />
-                  </div>
-                </motion.div>
+                  {isAdmin && (
+                    <div className="pl-8">
+                      <FileUploadBox
+                        clearAfterUpload
+                        onUploaded={(url, name, size) => void handleAddAttachment(m.id, url, name, size ?? '')}
+                      />
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
         </CardContent>
       </Card>
+
     </div>
   );
 }
@@ -1327,7 +1371,6 @@ function AnnouncementsTab() {
   const [items, setItems]     = useState<AnnouncementRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   const [title, setTitle]     = useState('');
   const [message, setMessage] = useState('');
   const [formError, setFormError] = useState('');
@@ -1354,7 +1397,7 @@ function AnnouncementsTab() {
     try {
       const res = await fetch(`${API_ORIGIN}/api/announcements`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: withUserIdHeader({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ title: title.trim(), message: message.trim() }),
       });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
@@ -1368,15 +1411,19 @@ function AnnouncementsTab() {
   }
 
   async function handleDelete(id: number) {
-    setDeleting(true);
+    const snapshot = items;
+    setItems(prev => prev.filter(a => a.id !== id));   // remove from UI instantly
     try {
-      const res = await fetch(`${API_ORIGIN}/api/announcements/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_ORIGIN}/api/announcements/${id}`, {
+        method: 'DELETE',
+        headers: withUserIdHeader({ Accept: 'application/json' }),
+      });
       if (!res.ok && res.status !== 204) throw new Error(`Server error: ${res.status}`);
-      setItems(prev => prev.filter(a => a.id !== id));
       toast.success('Announcement deleted');
     } catch (e) {
+      setItems(snapshot);                               // restore on failure
       toast.error(e instanceof Error ? e.message : 'Failed to delete');
-    } finally { setDeleting(false); }
+    }
   }
 
   return (
@@ -1446,7 +1493,6 @@ function AnnouncementsTab() {
                       title="Delete announcement?"
                       description="This announcement will be removed from the student dashboard."
                       onConfirm={() => void handleDelete(a.id)}
-                      disabled={deleting}
                     />
                   </div>
                 </motion.div>
