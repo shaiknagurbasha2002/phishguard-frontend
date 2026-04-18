@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router';
-import { getUsers, API_ORIGIN } from '@/lib/api';
+import { API_ORIGIN, setAuthToken } from '@/lib/api';
 import { useCurrentUser } from '@/context/UsersContext';
 import { motion } from 'motion/react';
 import { Shield, Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
@@ -19,6 +19,45 @@ export function LoginPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  function extractToken(payload: unknown): string | null {
+    if (!payload || typeof payload !== "object") return null;
+    const data = payload as Record<string, unknown>;
+    const tokenCandidates = [data.token, data.accessToken, data.access_token, data.jwt];
+    for (const value of tokenCandidates) {
+      if (typeof value === "string" && value.trim() !== "") return value;
+    }
+    return null;
+  }
+
+  function extractUserId(payload: unknown): number | null {
+    if (!payload || typeof payload !== "object") return null;
+    const data = payload as Record<string, unknown>;
+    const nested =
+      data.user && typeof data.user === "object"
+        ? (data.user as Record<string, unknown>)
+        : null;
+    const idCandidates = [data.id, data.userId, nested?.id, nested?.userId];
+    for (const value of idCandidates) {
+      const n = typeof value === "number" ? value : Number(value);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return null;
+  }
+
+  function extractRole(payload: unknown): string | null {
+    if (!payload || typeof payload !== "object") return null;
+    const data = payload as Record<string, unknown>;
+    const nested =
+      data.user && typeof data.user === "object"
+        ? (data.user as Record<string, unknown>)
+        : null;
+    const roleCandidates = [data.role, data.authority, data.userRole, nested?.role, nested?.authority];
+    for (const value of roleCandidates) {
+      if (typeof value === "string" && value.trim() !== "") return value;
+    }
+    return null;
+  }
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -31,15 +70,30 @@ export function LoginPage() {
         },
         body: JSON.stringify({
           email: email.trim(),
-          password: password.trim()
+          password
         })
       });
 
       const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
+        const token = extractToken(data);
+        if (token) setAuthToken(token);
+        const role = extractRole(data);
+        if (role) {
+          try {
+            localStorage.setItem("phishguard_user_role", role);
+          } catch {
+            // ignore localStorage access errors
+          }
+        }
+        const userId = extractUserId(data);
+        if (!userId) {
+          setError("Login response missing user id. Please check backend /users/login response.");
+          return;
+        }
         setError("");
-        setCurrentUserId(data.id);
+        setCurrentUserId(userId);
         await refreshUsers();
         navigate("/dashboard");
       } else {

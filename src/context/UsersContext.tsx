@@ -15,14 +15,13 @@ import {
   createUser as apiCreateUser,
   updateUser as apiUpdateUser,
   deleteUser as apiDeleteUser,
+  getAuthToken,
   type UserRow,
   type UserInput,
   type LeaderboardRow,
 } from "@/lib/api";
 
 export const CURRENT_USER_ID_KEY = "phishguard_current_user_id";
-
-const POLL_MS = 45_000;
 
 function readStoredUserId(): number | null {
   try {
@@ -78,6 +77,16 @@ export function UsersProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshUsers = useCallback(async () => {
+    const token = getAuthToken();
+    if (!token) {
+      if (!mounted.current) return;
+      setError(null);
+      setUsers([]);
+      setLeaderboard([]);
+      setLoading(false);
+      return;
+    }
+
     setError(null);
     setLoading(true);
     try {
@@ -93,8 +102,7 @@ export function UsersProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       if (!mounted.current) return;
       setError(e instanceof Error ? e.message : "Failed to load users");
-      setUsers([]);
-      setLeaderboard([]);
+      // Keep prior cache on transient fetch failures to avoid auth/UI flicker.
     } finally {
       if (mounted.current) setLoading(false);
     }
@@ -103,10 +111,8 @@ export function UsersProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     void refreshUsers();
-    const t = window.setInterval(() => void refreshUsers(), POLL_MS);
     return () => {
       mounted.current = false;
-      window.clearInterval(t);
     };
   }, [refreshUsers]);
 
@@ -116,8 +122,7 @@ export function UsersProvider({ children }: { children: ReactNode }) {
   }, [users, currentUserId]);
 
   const isAdmin = useMemo(() => {
-    const e = currentUser?.email?.toLowerCase() ?? "";
-    return e.includes("admin");
+    return currentUser?.role === "ROLE_ADMIN";
   }, [currentUser]);
 
   const getUserFromCache = useCallback(

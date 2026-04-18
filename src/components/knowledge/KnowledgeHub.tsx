@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
 import { Skeleton } from '../ui/skeleton';
-import { getKnowledgeArticles, KNOWLEDGE_URL, type KnowledgeArticle } from '../../lib/api';
+import { getKnowledgeArticles, type KnowledgeArticle } from '../../lib/api';
 
 const BOOKMARKS_KEY = 'phishguard_knowledge_bookmarks';
 
@@ -53,9 +53,9 @@ export function KnowledgeHub() {
       try {
         const list = await getKnowledgeArticles();
         if (!cancelled) setArticles(list);
-      } catch (e) {
+      } catch {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Failed to load articles');
+          setError('Could not load articles. Please try again.');
           setArticles([]);
         }
       } finally {
@@ -174,11 +174,11 @@ export function KnowledgeHub() {
             <CardTitle className="text-white">
               {search || categoryFilter || showBookmarked ? 'No matching articles' : 'No articles yet'}
             </CardTitle>
-            <CardDescription className="text-slate-300">
-              {search || categoryFilter || showBookmarked
-                ? 'Try a different search term or clear the filters.'
-                : `GET ${KNOWLEDGE_URL} returned an empty list.`}
-            </CardDescription>
+            {(search || categoryFilter || showBookmarked) ? (
+              <CardDescription className="text-slate-300">
+                Try a different search term or clear the filters.
+              </CardDescription>
+            ) : null}
           </CardHeader>
         </Card>
       ) : null}

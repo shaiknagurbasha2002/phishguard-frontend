@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { TrainingAttachment } from '@/lib/api';
 import { TRAINING_URL } from '@/lib/api';
+import { getAuthToken } from '@/lib/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import {
@@ -128,6 +129,15 @@ function FileViewerModal({ url, title, onClose }: {
 }
 
 const TRAINING_API_URL = TRAINING_URL;
+const TRAINING_UPLOAD_BASE_URL = 'http://localhost:8081/api/trainings/files/';
+
+function resolveModuleFileUrl(module: TrainingModuleRow): string | null {
+  const directUrl = module.fileUrl?.trim();
+  if (directUrl) return directUrl;
+  const fallbackName = module.fileName?.trim();
+  if (!fallbackName) return null;
+  return `${TRAINING_UPLOAD_BASE_URL}${encodeURIComponent(fallbackName)}`;
+}
 
 function formatUploadDate(iso: string | null | undefined): string {
   if (!iso) return '';
@@ -154,6 +164,7 @@ export type TrainingModuleRow = {
   title: string;
   description: string | null;
   progress: number;
+  fileName?: string | null;
   fileUrl?: string | null;
   attachments: TrainingAttachment[];
 };
@@ -200,6 +211,8 @@ function ModuleCard({
   const status     = getStatusLabel(m.progress);
   const isCompleted  = m.progress >= 100;
   const isCompleting = completing === m.id;
+  const moduleFileUrl = resolveModuleFileUrl(m);
+  const hasModuleFile = Boolean(moduleFileUrl);
 
   return (
     <motion.div
@@ -224,6 +237,11 @@ function ModuleCard({
                   <Badge className={`text-xs px-2 py-0.5 ${status.color}`}>
                     {status.label}
                   </Badge>
+                  {hasModuleFile && (
+                    <Badge className="text-xs px-2 py-0.5 bg-slate-700 text-slate-200">
+                      📎 Has File
+                    </Badge>
+                  )}
                   <span className="text-slate-300 text-xs flex items-center gap-1">
                     <Clock className="h-3 w-3" /> ~15 min
                   </span>
@@ -383,6 +401,28 @@ function ModuleCard({
                 </div>
 
                 {/* Mark complete from inside panel */}
+                {hasModuleFile && (
+                  <div className="px-5 pb-3">
+                    <div className="flex items-center gap-2">
+                      <a
+                        href={moduleFileUrl ?? '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded px-4 py-2 text-white text-sm font-semibold bg-[#3498db] hover:opacity-90"
+                      >
+                        📥 Download File
+                      </a>
+                      <a
+                        href={moduleFileUrl ?? '#'}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded px-4 py-2 text-white text-sm font-semibold bg-[#2c3e50] hover:opacity-90"
+                      >
+                        👁 View File
+                      </a>
+                    </div>
+                  </div>
+                )}
                 {!isCompleted && (
                   <div className="px-5 pb-5">
                     <Button
@@ -444,7 +484,10 @@ export function TrainingModules() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(TRAINING_API_URL, { headers: { Accept: 'application/json' } });
+      const token = getAuthToken();
+      const headers: HeadersInit = { Accept: 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(TRAINING_API_URL, { headers });
       if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data: unknown = await res.json();
       const list = Array.isArray(data) ? data : [];
@@ -456,6 +499,7 @@ export function TrainingModules() {
           title: String(r.title ?? ''),
           description: r.description != null ? String(r.description) : null,
           progress: Math.min(100, Math.max(0, Number(r.progress) || 0)),
+          fileName: r.fileName != null ? String(r.fileName) : (r.originalFileName != null ? String(r.originalFileName) : null),
           fileUrl: r.fileUrl != null ? String(r.fileUrl) : null,
           attachments: rawAtts.map((a: unknown, index: number) => {
             const att = a as Record<string, unknown>;
@@ -483,9 +527,12 @@ export function TrainingModules() {
   async function markComplete(moduleId: number) {
     setCompleting(moduleId);
     try {
+      const token = getAuthToken();
+      const headers: HeadersInit = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(`${TRAINING_API_URL}/${moduleId}/progress`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ progress: 100 }),
       });
       if (!res.ok) throw new Error('Failed to update');

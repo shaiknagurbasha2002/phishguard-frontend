@@ -51,9 +51,9 @@ export function IncidentReporting() {
         ? await getAllIncidents()
         : await getIncidentsForUser(currentUser.id);
       setIncidents(list);
-    } catch (e) {
+    } catch {
       setIncidents([]);
-      setListError(e instanceof Error ? e.message : 'Failed to load incidents');
+      setListError('Could not load incidents. Please try again.');
     } finally {
       setListLoading(false);
     }
@@ -125,7 +125,7 @@ export function IncidentReporting() {
             <CardHeader>
               <CardTitle className="text-white">Report an incident</CardTitle>
               <CardDescription className="text-slate-400">
-                Submitted as user ID {currentUser.id} · POST http://localhost:8081/api/incidents
+                Your report is submitted under your account.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -187,9 +187,7 @@ export function IncidentReporting() {
             <CardHeader>
               <CardTitle className="text-white">Your incidents</CardTitle>
               <CardDescription className="text-slate-400">
-                {isAdmin
-                  ? 'All incidents (admin) — GET http://localhost:8081/api/incidents'
-                  : `GET http://localhost:8081/api/incidents/user/${currentUser.id}`}
+                {isAdmin ? 'All incidents reported across the organization.' : 'Incidents you have reported.'}
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -5,7 +5,7 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Skeleton } from '../ui/skeleton';
 import { AlertTriangle, CheckCircle2, XCircle, Mail, ChevronDown, ChevronUp, Target } from 'lucide-react';
-import { getSimulations, SIMULATIONS_URL, type SimulationRow } from '@/lib/api';
+import { getSimulations, type SimulationRow } from '@/lib/api';
 import { toast } from 'sonner';
 
 // Simulated email content for each scenario (matched by title keywords)
@@ -322,7 +322,7 @@ export function PhishingSimulation() {
       } catch (e) {
         if (!cancelled) {
           setItems([]);
-          setError(e instanceof Error ? e.message : 'Failed to load simulations');
+          setError('Could not load simulations. Please try again.');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -374,7 +374,6 @@ export function PhishingSimulation() {
       {!loading && !error && items.length === 0 ? (
         <Card className="border-slate-800 bg-slate-900/50 p-6 text-white">
           <p className="text-sm text-slate-300">No simulations available yet.</p>
-          <p className="text-xs text-slate-400 mt-2">GET {SIMULATIONS_URL} returned an empty list.</p>
         </Card>
       ) : null}
 

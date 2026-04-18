@@ -5,6 +5,7 @@
 export const API_ORIGIN = (import.meta.env.VITE_API_BASE_URL as string) || "http://localhost:8081";
 
 export const BASE_URL = `${API_ORIGIN}/users`;
+export const AUTH_TOKEN_KEY = "phishguard_auth_token";
 
 /** Full absolute URL — list payload includes first question + options per quiz. */
 export const QUIZZES_URL = `${API_ORIGIN}/api/quizzes`;
@@ -17,6 +18,8 @@ export type UserRow = {
   id: number;
   full_name: string;
   email: string;
+  role: string | null;
+  email_verified: boolean;
   /** From backend points / total_points / totalPoints, else 0 */
   total_points: number;
 };
@@ -43,6 +46,73 @@ const ACCEPT_JSON: HeadersInit = {
 };
 
 const CURRENT_USER_ID_KEY = "phishguard_current_user_id";
+let authFetchInstalled = false;
+
+export function getAuthToken(): string | null {
+  try {
+    const token = localStorage.getItem(AUTH_TOKEN_KEY);
+    if (!token) return null;
+    const trimmed = token.trim();
+    return trimmed === "" ? null : trimmed;
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string): void {
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch {
+    // ignore localStorage access errors
+  }
+}
+
+export function clearAuthToken(): void {
+  try {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    // ignore localStorage access errors
+  }
+}
+
+export function installAuthFetchInterceptor(loginPath = "/"): void {
+  if (authFetchInstalled || typeof window === "undefined") return;
+  authFetchInstalled = true;
+  const nativeFetch = window.fetch.bind(window);
+  const apiOrigin = new URL(API_ORIGIN, window.location.origin).origin;
+  const authBypassPaths = new Set([
+    "/users/login",
+    "/users/register",
+    "/users/forgot-password",
+    "/users/reset-password",
+  ]);
+
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const requestUrl =
+      typeof input === "string"
+        ? new URL(input, window.location.origin)
+        : input instanceof URL
+          ? input
+          : new URL(input.url, window.location.origin);
+    const isApiRequest = requestUrl.origin === apiOrigin;
+    const isAuthBypassRequest = authBypassPaths.has(requestUrl.pathname);
+    const headers = new Headers(
+      init?.headers ?? (input instanceof Request ? input.headers : undefined),
+    );
+    const token = getAuthToken();
+    const hadToken = Boolean(token);
+    if (isApiRequest && !isAuthBypassRequest && token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+    const response = await nativeFetch(input, { ...init, headers });
+
+    // NOTE: Do NOT auto-redirect on 403 here — individual components (authJson,
+    // authMultipartJson, etc.) handle session expiry with proper React navigation.
+    // A hard window.location.replace() here caused redirect loops.
+
+    return response;
+  };
+}
 
 function readStoredCurrentUserId(): number | null {
   try {
@@ -78,12 +148,16 @@ function normalizeUser(raw: Record<string, unknown>): UserRow {
   const tp = raw.total_points ?? raw.totalPoints ?? raw.points;
   const total_points =
     typeof tp === "number" && !Number.isNaN(tp) ? tp : Number(tp) || 0;
+  const role = raw.role ?? raw.authority ?? raw.userRole;
+  const emailVerifiedRaw = raw.email_verified ?? raw.emailVerified ?? raw.verified;
   return {
     id: Number(raw.id),
     full_name: String(
       raw.full_name ?? raw.name ?? raw.fullName ?? "",
     ),
     email: String(raw.email ?? ""),
+    role: role != null && String(role).trim() !== "" ? String(role) : null,
+    email_verified: Boolean(emailVerifiedRaw),
     total_points,
   };
 }
@@ -183,6 +257,38 @@ export async function deleteUser(id: number): Promise<void> {
   });
   if (res.ok || res.status === 204) return;
   throw new Error(await readError(res));
+}
+
+/** PATCH /users/{id}/role (fallback: PUT /users/{id}) */
+export async function makeUserAdmin(id: number): Promise<UserRow> {
+  const roleBody = JSON.stringify({ role: "ROLE_ADMIN" });
+  const patchUrl = `${BASE_URL}/${id}/role`;
+  try {
+    const patchRes = await fetch(patchUrl, {
+      method: "PATCH",
+      headers: JSON_HEADERS,
+      body: roleBody,
+    });
+    if (patchRes.ok) {
+      const data = await handleJsonResponse<Record<string, unknown>>(patchRes);
+      return normalizeUser(data);
+    }
+  } catch {
+    // Fall through to PUT fallback below.
+  }
+
+  const current = await getUserById(id);
+  const putRes = await fetch(`${BASE_URL}/${id}`, {
+    method: "PUT",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({
+      name: current.full_name,
+      email: current.email,
+      role: "ROLE_ADMIN",
+    }),
+  });
+  const data = await handleJsonResponse<Record<string, unknown>>(putRes);
+  return normalizeUser(data);
 }
 
 /** GET /api/users — connectivity check (same resource as list users). */
@@ -905,7 +1011,7 @@ export async function attachFileToArticle(id: number, fileUrl: string): Promise<
 
 // --- Training Modules ---
 
-export const TRAINING_URL = `${API_ORIGIN}/api/training`;
+export const TRAINING_URL = `${API_ORIGIN}/api/trainings`;
 
 export type TrainingAttachment = {
   id: number;
@@ -1195,6 +1301,26 @@ export async function getNotifications(): Promise<NotificationRow[]> {
   return [];
 }
 
+/** GET /api/notifications/user/{userId} — user-scoped list (JWT recommended) */
+export async function getNotificationsForUser(userId: number): Promise<NotificationRow[]> {
+  const url = `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(userId))}`;
+  const headers = new Headers(ACCEPT_JSON);
+  const token = getAuthToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "GET", headers, mode: "cors" });
+  } catch (e) {
+    throw wrapApiNetworkError(url, e);
+  }
+  if (!res.ok) {
+    throw new Error(await readError(res));
+  }
+  const data = (await res.json().catch(() => null)) as unknown;
+  if (!Array.isArray(data)) return [];
+  return (data as Record<string, unknown>[]).map(normalizeNotification);
+}
+
 /** GET unread count — same dual-path pattern as getNotifications */
 export async function getUnreadCount(): Promise<number> {
   const uid = readStoredCurrentUserId();
@@ -1232,9 +1358,12 @@ export async function markNotificationRead(id: number): Promise<NotificationRow>
   return normalizeNotification(data);
 }
 
-/** PUT mark all read — tries /user/{id}/read-all then /read-all */
-export async function markAllNotificationsRead(): Promise<void> {
-  const uid = readStoredCurrentUserId();
+/** PUT mark all read — tries /user/{id}/read-all then /read-all (sends JWT when present) */
+export async function markAllNotificationsRead(explicitUserId?: number): Promise<void> {
+  const uid =
+    explicitUserId != null && Number.isFinite(explicitUserId) && explicitUserId > 0
+      ? explicitUserId
+      : readStoredCurrentUserId();
   const urls =
     uid != null
       ? [
@@ -1243,10 +1372,14 @@ export async function markAllNotificationsRead(): Promise<void> {
         ]
       : [`${NOTIFICATIONS_URL}/read-all`];
 
+  const headers = new Headers(ACCEPT_JSON);
+  const token = getAuthToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
   let lastMsg = "Could not mark all as read";
   for (const url of urls) {
     try {
-      const res = await fetch(url, { method: "PUT", headers: ACCEPT_JSON, mode: "cors" });
+      const res = await fetch(url, { method: "PUT", headers, mode: "cors" });
       if (res.ok || res.status === 204) return;
       lastMsg = await readError(res);
     } catch (e) {
@@ -1254,4 +1387,21 @@ export async function markAllNotificationsRead(): Promise<void> {
     }
   }
   throw new Error(lastMsg);
+}
+
+/** DELETE /api/notifications/user/{userId}/read — remove read notifications for user (JWT required) */
+export async function deleteReadNotificationsForUser(userId: number): Promise<void> {
+  const url = `${NOTIFICATIONS_URL}/user/${encodeURIComponent(String(userId))}/read`;
+  const headers = new Headers(ACCEPT_JSON);
+  const token = getAuthToken();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "DELETE", headers, mode: "cors" });
+  } catch (e) {
+    throw wrapApiNetworkError(url, e);
+  }
+  if (res.ok || res.status === 204) return;
+  throw new Error(await readError(res));
 }

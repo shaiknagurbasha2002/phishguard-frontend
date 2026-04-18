@@ -37,7 +37,13 @@ import {
 } from '../ui/dropdown-menu';
 import { useCurrentUser } from '@/context/UsersContext';
 import {
-  getNotifications, getUnreadCount, markNotificationRead, markAllNotificationsRead,
+  getNotifications,
+  getNotificationsForUser,
+  getUnreadCount,
+  markNotificationRead,
+  markAllNotificationsRead,
+  clearAuthToken,
+  getAuthToken,
   type NotificationRow,
 } from '@/lib/api';
 import { toast } from 'sonner';
@@ -53,7 +59,7 @@ const navigation = [
   { name: 'Knowledge Hub', href: '/dashboard/knowledge', icon: BookMarked },
   { name: 'Report Incident', href: '/dashboard/report', icon: AlertTriangle },
   { name: 'Security Tools', href: '/dashboard/tools', icon: Wrench },
-  { name: 'Admin Panel', href: '/dashboard/admin', icon: ShieldAlert, adminOnly: true },
+  { name: 'Admin Panel', href: '/admin', icon: ShieldAlert, adminOnly: true },
 ];
 
 function initials(name: string) {
@@ -109,6 +115,11 @@ export function DashboardLayout() {
 
   // Fetch notifications whenever the panel opens or the userId changes
   const fetchNotifications = useCallback(async () => {
+    if (!currentUserId || !getAuthToken()) {
+      setNotifications([]);
+      setUnreadCount(0);
+      return;
+    }
     setNotifLoading(true);
     try {
       const [list, unread] = await Promise.all([getNotifications(), getUnreadCount()]);
@@ -119,7 +130,7 @@ export function DashboardLayout() {
     } finally {
       setNotifLoading(false);
     }
-  }, []);
+  }, [currentUserId]);
 
   // Poll every 60 s so new admin content shows up automatically
   useEffect(() => {
@@ -187,13 +198,46 @@ export function DashboardLayout() {
     }
   }
 
+  /**
+   * Opening: GET unread list for user → show it → PUT read-all → badge 0.
+   * Closing: hide dropdown only (outside click handler).
+   */
+  async function toggleNotificationPanel() {
+    if (notifOpen) {
+      setNotifOpen(false);
+      return;
+    }
+    setNotifOpen(true);
+    if (currentUserId == null || !getAuthToken()) {
+      await fetchNotifications();
+      return;
+    }
+    setNotifLoading(true);
+    try {
+      const list = await getNotificationsForUser(currentUserId);
+      setNotifications(list);
+      await markAllNotificationsRead(currentUserId);
+      setUnreadCount(0);
+    } catch {
+      try {
+        await fetchNotifications();
+      } catch {
+        // silent
+      }
+    } finally {
+      setNotifLoading(false);
+    }
+  }
+
   useEffect(() => {
-    if (!loading && currentUserId == null) {
+    const hasToken = Boolean(getAuthToken());
+    if (!loading && currentUserId == null && !hasToken) {
       navigate('/', { replace: true });
     }
   }, [loading, currentUserId, navigate]);
 
   const handleLogout = () => {
+    clearAuthToken();
     setCurrentUserId(null);
     navigate('/');
   };
@@ -392,7 +436,7 @@ export function DashboardLayout() {
                 <button
                   type="button"
                   aria-label="Notifications"
-                  onClick={() => { setNotifOpen(prev => !prev); void fetchNotifications(); }}
+                  onClick={() => { void toggleNotificationPanel(); }}
                   className="relative p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                 >
                   <Bell className="h-5 w-5" />
@@ -475,13 +519,15 @@ export function DashboardLayout() {
 
                               <div className="flex-1 min-w-0">
                                 {n.title && (
-                                  <p className={`text-xs leading-snug ${n.read ? 'text-slate-200' : 'text-white font-semibold'}`}>
-                                    {n.title}
-                                  </p>
+                                  <p
+                                    className={`text-xs leading-snug [&_a]:underline ${n.read ? 'text-slate-200' : 'text-white font-semibold'}`}
+                                    dangerouslySetInnerHTML={{ __html: n.title }}
+                                  />
                                 )}
-                                <p className={`text-xs leading-snug ${n.read ? 'text-slate-300' : 'text-slate-100'} ${n.title ? 'mt-0.5' : ''}`}>
-                                  {n.message}
-                                </p>
+                                <p
+                                  className={`text-xs leading-snug [&_a]:underline ${n.read ? 'text-slate-300' : 'text-slate-100'} ${n.title ? 'mt-0.5' : ''}`}
+                                  dangerouslySetInnerHTML={{ __html: n.message }}
+                                />
                                 <p className="text-[10px] text-slate-500 mt-0.5">
                                   {formatDateTime(n.createdAt)}
                                 </p>

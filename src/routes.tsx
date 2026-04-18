@@ -4,6 +4,7 @@ import { DashboardLayout } from './components/layouts/DashboardLayout';
 import { LoginPage } from './components/auth/LoginPage';
 import { RegisterPage } from './components/auth/RegisterPage';
 import { ForgotPasswordPage } from './components/auth/ForgotPasswordPage';
+import { ResetPasswordPage } from './components/auth/ResetPasswordPage';
 import { UserDashboard } from './components/dashboard/UserDashboard';
 import { TrainingModules } from './components/training/TrainingModules';
 import { QuizInterface } from './components/quiz/QuizInterface';
@@ -15,9 +16,11 @@ import { KnowledgeArticleDetail } from './components/knowledge/KnowledgeArticleD
 import { IncidentReporting } from './components/reporting/IncidentReporting';
 import { SecurityTools } from './components/tools/SecurityTools';
 import { AdminDashboard } from './components/admin/AdminDashboard';
+import { AdminPanelPage } from './components/admin/AdminPanelPage';
 import { UserProfilePage } from './components/profile/UserProfilePage';
 import { NotFoundPage } from './components/NotFoundPage';
 import { UsersProvider } from './hooks/useUsers';
+import { RequireAdmin } from './components/auth/RequireAdmin';
 
 function RootProviders() {
   return (
@@ -36,8 +39,10 @@ export const router = createBrowserRouter([
         element: <AuthLayout />,
         children: [
           { index: true, element: <LoginPage /> },
+          { path: 'login', element: <LoginPage /> },
           { path: 'register', element: <RegisterPage /> },
           { path: 'forgot-password', element: <ForgotPasswordPage /> },
+          { path: 'reset-password', element: <ResetPasswordPage /> },
         ],
       },
       {
@@ -58,6 +63,11 @@ export const router = createBrowserRouter([
           { path: 'profile', element: <UserProfilePage /> },
           { path: 'profile/:userId', element: <UserProfilePage /> },
         ],
+      },
+      {
+        path: '/admin',
+        element: <RequireAdmin />,
+        children: [{ index: true, element: <AdminPanelPage /> }],
       },
       {
         path: '*',
