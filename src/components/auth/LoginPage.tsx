@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { useNavigate, Link } from 'react-router';
+import { useNavigate, useSearchParams, Link } from 'react-router';
 import { API_ORIGIN, setAuthToken } from '@/lib/api';
 import { useCurrentUser } from '@/context/UsersContext';
 import { motion } from 'motion/react';
-import { Shield, Mail, Lock, Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { Shield, Mail, Lock, Eye, EyeOff, AlertCircle, CheckCircle } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -12,6 +12,8 @@ import { Alert, AlertDescription } from '../ui/alert';
 
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const isVerified = searchParams.get('verified') === 'true';
   const { setCurrentUserId, refreshUsers } = useCurrentUser();
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
@@ -133,6 +135,14 @@ export function LoginPage() {
 
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
+              {isVerified && (
+                <Alert className="bg-green-900/20 border-green-600">
+                  <CheckCircle className="h-4 w-4 text-green-400" />
+                  <AlertDescription className="text-green-300">
+                    Email verified successfully! You can now log in.
+                  </AlertDescription>
+                </Alert>
+              )}
               {error && (
                 <Alert variant="destructive" className="bg-red-900/20 border-red-900">
                   <AlertCircle className="h-4 w-4" />
