@@ -229,7 +229,7 @@ export async function getUserById(id: number): Promise<UserRow> {
 
 /** POST — create user */
 export async function createUser(body: UserInput): Promise<UserRow> {
-  const res = await fetch(BASE_URL, {
+  const res = await fetch(`${BASE_URL}/register`, {
     method: "POST",
     headers: JSON_HEADERS,
     body: userInputToJsonBody(body),
