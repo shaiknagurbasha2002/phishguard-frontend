@@ -122,7 +122,12 @@ export function UsersProvider({ children }: { children: ReactNode }) {
   }, [users, currentUserId]);
 
   const isAdmin = useMemo(() => {
-    return currentUser?.role === "ROLE_ADMIN";
+    if (currentUser?.role === "ROLE_ADMIN") return true;
+    try {
+      return localStorage.getItem("phishguard_user_role") === "ROLE_ADMIN";
+    } catch {
+      return false;
+    }
   }, [currentUser]);
 
   const getUserFromCache = useCallback(
