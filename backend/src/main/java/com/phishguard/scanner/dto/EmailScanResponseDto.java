@@ -23,6 +23,9 @@ public class EmailScanResponseDto {
     @JsonProperty("risk_score")
     private Integer riskScore;
 
+    @JsonProperty("risk_level")
+    private String riskLevel;
+
     private String status;
 
     @JsonProperty("ai_summary")
